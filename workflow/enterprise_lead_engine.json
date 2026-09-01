@@ -1,0 +1,529 @@
+{
+  "name": "Enterprise AI Lead Engine (Groq + Slack + Google Sheets)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "groq-lead-intake",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "e58c168e-2035-47e4-9d02-a4bc960723ac",
+      "name": "Webhook - Lead Intake",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -2144,
+        -304
+      ],
+      "webhookId": "groq-lead-intake"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.item.json.body || $input.item.json;\n\nconst name = (body.name || '').trim();\nconst email = (body.email || '').trim().toLowerCase();\nconst phone = (body.phone || 'N/A').trim();\nconst company = (body.company || 'Individual').trim();\nconst inquiry = (body.inquiry || '').trim();\nconst budget = Number(body.budget) || 0;\n\nconst emailRegex = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/;\nconst isValid = emailRegex.test(email) && name.length >= 2;\n\nreturn [{\n  json: {\n    isValid,\n    name,\n    email,\n    phone,\n    company,\n    inquiry,\n    budget,\n    receivedAt: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "faa4bc26-eb29-4a50-905f-f18ed81669e8",
+      "name": "Sanitize & Validate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1920,
+        -304
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.isValid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "f0a56bc0-32b3-44b0-a197-28c3f56987ab",
+      "name": "Is Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -1712,
+        -304
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"success\": false,\n  \"error\": \"Invalid submission. Please provide a valid name and email.\"\n}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "720f443f-6be0-4c46-a0e8-fcb2f100ac35",
+      "name": "400 Bad Request",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        -1472,
+        -112
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Analyze and qualify this incoming project lead strictly into raw JSON (no markdown ticks or surrounding conversational text):\n\nLead Details:\n- Name: {{ $json.name }}\n- Company: {{ $json.company }}\n- Budget: ${{ $json.budget }}\n- Inquiry: {{ $json.inquiry }}\n\nReturn JSON Schema:\n{\n  \"leadScore\": number (1-100),\n  \"priority\": \"Hot\" | \"Warm\" | \"Cold\",\n  \"intentSummary\": string,\n  \"recommendedAction\": string\n}",
+        "options": {
+          "systemMessage": "You are an autonomous AI Sales Agent. Your job is to strictly analyze the intent, scope, and budget of incoming leads and return structured evaluation JSON with leadScore, priority, intentSummary, and recommendedAction."
+        }
+      },
+      "id": "04538943-6567-4935-ab74-8cb822744293",
+      "name": "AI Lead Qualification Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        -1472,
+        -464
+      ]
+    },
+    {
+      "parameters": {
+        "model": "openai/gpt-oss-120b",
+        "options": {
+          "temperature": 0.2
+        }
+      },
+      "id": "81ed26a5-bd28-4375-ab4e-40f16e57f521",
+      "name": "Groq Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGroq",
+      "typeVersion": 1,
+      "position": [
+        -1472,
+        -288
+      ],
+      "credentials": {
+        "groqApi": {
+          "id": "YOUR_GROQ_CREDENTIAL_ID",
+          "name": "Groq account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const output = $input.item.json.output || $input.item.json.text || '{}';\nlet ai = {};\ntry {\n  const cleanJson = typeof output === 'string' ? output.replace(/```json|```/g, '').trim() : output;\n  ai = typeof cleanJson === 'string' ? JSON.parse(cleanJson) : cleanJson;\n} catch (e) {\n  ai = {\n    leadScore: 50,\n    priority: 'Warm',\n    intentSummary: 'Inquiry parsed via fallback mechanism.',\n    recommendedAction: 'Manual review required.'\n  };\n}\n\nconst original = $('Sanitize & Validate').item.json;\n\n// Slack color hex codes: Hot = Red (#E01E5A), Warm = Gold (#ECB22E), Cold = Blue (#2EB67D)\nlet colorHex = '#2EB67D';\nif (ai.priority === 'Hot') colorHex = '#E01E5A';\nelse if (ai.priority === 'Warm') colorHex = '#ECB22E';\n\nreturn [{\n  json: {\n    ...original,\n    qualification: ai,\n    slackColor: colorHex\n  }\n}];"
+      },
+      "id": "b7bc4d05-d4b4-4a1f-b27c-bf82239c7863",
+      "name": "Parse Groq Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1152,
+        -464
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_DOCUMENT_ID",
+          "mode": "list",
+          "cachedResultName": "Lead generations",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEET_DOCUMENT_ID/edit"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "={{ $json.qualification.priority === 'Hot' ? 'Hot Leads' : 'Cold Leads' }}"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Timestamp": "={{ $json.receivedAt }}",
+            "Name": "={{ $json.name }}",
+            "Email": "={{ $json.email }}",
+            "Phone": "={{ \"'\" + $json.phone }}",
+            "Company": "={{ $json.company }}",
+            "Budget": "={{ $json.budget }}",
+            "Score": "={{ $json.qualification.leadScore }}",
+            "Priority": "={{ $json.qualification.priority }}",
+            "Summary": "={{ $json.qualification.intentSummary }}",
+            "Actions": "={{ $json.qualification.recommendedAction }}",
+            "Inquiry": "={{ $json.inquiry }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Timestamp",
+              "displayName": "Timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Name",
+              "displayName": "Name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Email",
+              "displayName": "Email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Phone",
+              "displayName": "Phone",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Company",
+              "displayName": "Company",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Budget",
+              "displayName": "Budget",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Score",
+              "displayName": "Score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Priority",
+              "displayName": "Priority",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Summary",
+              "displayName": "Summary",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Actions",
+              "displayName": "Actions",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Inquiry",
+              "displayName": "Inquiry",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "c18dd2cc-ebfb-4203-b347-4f8acfafea95",
+      "name": "Append to Google Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        -944,
+        -464
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "YOUR_GOOGLE_SHEETS_CREDENTIAL_ID",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"success\": true,\n  \"message\": \"Inquiry received successfully!\"\n}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "be0d1e7f-2878-449c-a238-0fd4b3d0d617",
+      "name": "200 Success Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        -704,
+        -592
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SLACK_WEBHOOK_URL || 'https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK_URL' }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{\n  JSON.stringify({\n    \"attachments\": [\n      {\n        \"color\": $('Parse Groq Output').item.json.slackColor || \"#2EB67D\",\n        \"blocks\": [\n          {\n            \"type\": \"header\",\n            \"text\": {\n              \"type\": \"plain_text\",\n              \"text\": ($('Parse Groq Output').item.json.qualification.priority === \"Hot\" ? \"🔥 HOT Lead Alert\" : \"📋 New Lead Qualified\") + \" - \" + $('Parse Groq Output').item.json.company,\n              \"emoji\": true\n            }\n          },\n          {\n            \"type\": \"section\",\n            \"fields\": [\n              {\n                \"type\": \"mrkdwn\",\n                \"text\": \"*👤 Contact:*\\n\" + $('Parse Groq Output').item.json.name + \"\\n\" + $('Parse Groq Output').item.json.email + \"\\n\" + $('Parse Groq Output').item.json.phone\n              },\n              {\n                \"type\": \"mrkdwn\",\n                \"text\": \"*💰 Budget & Score:*\\n*Budget:* $\" + $('Parse Groq Output').item.json.budget + \"\\n*Score:* \" + $('Parse Groq Output').item.json.qualification.leadScore + \"/100\\n*Priority:* `\" + $('Parse Groq Output').item.json.qualification.priority + \"`\"\n              }\n            ]\n          },\n          {\n            \"type\": \"section\",\n            \"text\": {\n              \"type\": \"mrkdwn\",\n              \"text\": \"*🤖 AI Summary:*\\n\" + $('Parse Groq Output').item.json.qualification.intentSummary\n            }\n          },\n          {\n            \"type\": \"section\",\n            \"text\": {\n              \"type\": \"mrkdwn\",\n              \"text\": \"*🎯 Recommended Next Step:*\\n\" + $('Parse Groq Output').item.json.qualification.recommendedAction\n            }\n          },\n          {\n            \"type\": \"context\",\n            \"elements\": [\n              {\n                \"type\": \"mrkdwn\",\n                \"text\": \"📝 *Inquiry:* \\\"\" + $('Parse Groq Output').item.json.inquiry + \"\\\" • \" + $('Parse Groq Output').item.json.receivedAt\n              }\n            ]\n          }\n        ]\n      }\n    ]\n  })\n}}",
+        "options": {}
+      },
+      "id": "cc2a9389-ddc1-4c2a-816a-207f5e183996",
+      "name": "Send Slack Block Kit Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -704,
+        -432
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "c_priority",
+              "leftValue": "={{ $('Parse Groq Output').item.json.qualification.priority }}",
+              "rightValue": "Hot",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "c980dbf4-3c43-421a-accc-109b722d0735",
+      "name": "Is Hot Priority?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -704,
+        -240
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Parse Groq Output').item.json.email }}",
+        "subject": "=Consultation Booking - {{ $('Parse Groq Output').item.json.company }} Project",
+        "message": "=<div style=\"font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 32px 24px; color: #1e293b; background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px;\">\n  \n  <!-- Header / Brand -->\n  <div style=\"border-bottom: 2px solid #f1f5f9; padding-bottom: 20px; margin-bottom: 24px;\">\n    <span style=\"font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: #4f46e5; background: #eef2ff; padding: 4px 10px; border-radius: 9999px;\">Project Discovery</span>\n    <h2 style=\"font-size: 20px; font-weight: 800; color: #0f172a; margin: 12px 0 0 0; letter-spacing: -0.02em;\">Consultation Request Confirmed</h2>\n  </div>\n\n  <!-- Body Content -->\n  <p style=\"font-size: 15px; line-height: 1.6; color: #334155; margin: 0 0 16px 0;\">\n    Hi <strong>{{ $('Parse Groq Output').item.json.name }}</strong>,\n  </p>\n\n  <p style=\"font-size: 15px; line-height: 1.6; color: #334155; margin: 0 0 20px 0;\">\n    Thank you for submitting your project specifications for <strong>{{ $('Parse Groq Output').item.json.company }}</strong>. Our technical architecture team has reviewed your scope and target milestones.\n  </p>\n\n  <!-- Project Summary Box -->\n  <div style=\"background-color: #f8fafc; border-left: 4px solid #4f46e5; padding: 14px 18px; border-radius: 4px; margin-bottom: 24px;\">\n    <p style=\"margin: 0; font-size: 13px; font-weight: 600; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em;\">Initial Scope Summary</p>\n    <p style=\"margin: 6px 0 0 0; font-size: 14px; color: #1e293b; font-style: italic;\">\n      \"{{ $('Parse Groq Output').item.json.inquiry }}\"\n    </p>\n  </div>\n\n  <p style=\"font-size: 15px; line-height: 1.6; color: #334155; margin: 0 0 24px 0;\">\n    To ensure we align on deliverables, technical requirements, and execution timelines, we would like to invite you to an introductory <strong>30-minute discovery session</strong>.\n  </p>\n\n  <!-- CTA Button -->\n  <div style=\"text-align: left; margin: 28px 0;\">\n    <a href=\"https://cal.com/consultation-booking\" style=\"background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%); color: #ffffff; text-decoration: none; padding: 12px 24px; border-radius: 8px; font-size: 14px; font-weight: 600; display: inline-block; box-shadow: 0 4px 12px rgba(79, 70, 229, 0.25);\">\n      Reserve Your Consultation Slot &rarr;\n    </a>\n  </div>\n\n  <p style=\"font-size: 13px; line-height: 1.5; color: #64748b; margin: 0 0 24px 0;\">\n    <em>If you have reference documentation, system diagrams, or wireframes prepared, feel free to reply directly to this thread with attachments.</em>\n  </p>\n\n  <!-- Footer / Signoff -->\n  <div style=\"border-top: 1px solid #f1f5f9; padding-top: 20px; margin-top: 24px;\">\n    <p style=\"margin: 0; font-size: 14px; font-weight: 700; color: #0f172a;\">Executive Solutions Team</p>\n    <p style=\"margin: 2px 0 0 0; font-size: 12px; color: #94a3b8;\">Client Architecture & Strategy</p>\n  </div>\n</div>",
+        "options": {}
+      },
+      "id": "d002c188-e4a9-4a91-8cf4-19c96506685c",
+      "name": "Send Hot Lead Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        -464,
+        -320
+      ],
+      "webhookId": "hot-lead-email",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "YOUR_GMAIL_CREDENTIAL_ID",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Parse Groq Output').item.json.email }}",
+        "subject": "=Inquiry Received - {{ $('Parse Groq Output').item.json.company }}",
+        "message": "=<div style=\"font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 32px 24px; color: #1e293b; background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px;\">\n  \n  <!-- Header / Status Badge -->\n  <div style=\"border-bottom: 2px solid #f1f5f9; padding-bottom: 20px; margin-bottom: 24px;\">\n    <span style=\"font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: #475569; background: #f1f5f9; padding: 4px 10px; border-radius: 9999px;\">Inquiry Received</span>\n    <h2 style=\"font-size: 20px; font-weight: 800; color: #0f172a; margin: 12px 0 0 0; letter-spacing: -0.02em;\">Project Scope Under Review</h2>\n  </div>\n\n  <!-- Main Body -->\n  <p style=\"font-size: 15px; line-height: 1.6; color: #334155; margin: 0 0 16px 0;\">\n    Hi <strong>{{ $('Parse Groq Output').item.json.name }}</strong>,\n  </p>\n\n  <p style=\"font-size: 15px; line-height: 1.6; color: #334155; margin: 0 0 20px 0;\">\n    Thank you for submitting your project details regarding <strong>{{ $('Parse Groq Output').item.json.company }}</strong>. We have successfully logged your inquiry in our system.\n  </p>\n\n  <!-- Inquiry Callout Card -->\n  <div style=\"background-color: #f8fafc; border-left: 4px solid #94a3b8; padding: 14px 18px; border-radius: 4px; margin-bottom: 24px;\">\n    <p style=\"margin: 0; font-size: 13px; font-weight: 600; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em;\">Submitted Scope Details</p>\n    <p style=\"margin: 6px 0 0 0; font-size: 14px; color: #334155; font-style: italic;\">\n      \"{{ $('Parse Groq Output').item.json.inquiry }}\"\n    </p>\n  </div>\n\n  <!-- Clarification Questions -->\n  <p style=\"font-size: 15px; line-height: 1.6; color: #334155; margin: 0 0 12px 0;\">\n    To help our strategy team evaluate feasibility against your target budget and timeline, could you reply directly with brief answers to the following?\n  </p>\n\n  <ul style=\"font-size: 14px; line-height: 1.6; color: #475569; margin: 0 0 24px 0; padding-left: 20px;\">\n    <li style=\"margin-bottom: 6px;\"><strong>Timeline:</strong> What is your target deployment or launch date?</li>\n    <li style=\"margin-bottom: 6px;\"><strong>Deliverables:</strong> Are there any benchmark platforms or live examples you want to model after?</li>\n    <li><strong>Assets:</strong> Do you have existing technical requirements/designs, or is this being architected from scratch?</li>\n  </ul>\n\n  <p style=\"font-size: 14px; line-height: 1.6; color: #64748b; margin: 0 0 24px 0;\">\n    Once we receive your additional context, our team will review the specifications and follow up with a structured scope outline within <strong>24 business hours</strong>.\n  </p>\n\n  <!-- Signoff -->\n  <div style=\"border-top: 1px solid #f1f5f9; padding-top: 20px; margin-top: 24px;\">\n    <p style=\"margin: 0; font-size: 14px; font-weight: 700; color: #0f172a;\">Client Services Team</p>\n    <p style=\"margin: 2px 0 0 0; font-size: 12px; color: #94a3b8;\">Inbound Solutions & Scoping</p>\n  </div>\n</div>",
+        "options": {}
+      },
+      "id": "93b39366-61b0-4a0a-91d4-364075dccda6",
+      "name": "Send Standard Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        -464,
+        -160
+      ],
+      "webhookId": "standard-lead-email",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "YOUR_GMAIL_CREDENTIAL_ID",
+          "name": "Gmail account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook - Lead Intake": {
+      "main": [
+        [
+          {
+            "node": "Sanitize & Validate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sanitize & Validate": {
+      "main": [
+        [
+          {
+            "node": "Is Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Valid?": {
+      "main": [
+        [
+          {
+            "node": "AI Lead Qualification Agent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "400 Bad Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Lead Qualification Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Lead Qualification Agent": {
+      "main": [
+        [
+          {
+            "node": "Parse Groq Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Groq Output": {
+      "main": [
+        [
+          {
+            "node": "Append to Google Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append to Google Sheet": {
+      "main": [
+        [
+          {
+            "node": "200 Success Response",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Send Slack Block Kit Alert",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Is Hot Priority?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Hot Priority?": {
+      "main": [
+        [
+          {
+            "node": "Send Hot Lead Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Standard Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "113adeff-a8b9-4dd2-aa77-72b2b83dc45a",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "nodeGroups": [],
+  "tags": []
+}

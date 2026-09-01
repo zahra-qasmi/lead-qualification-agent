@@ -1,0 +1,16 @@
+# Environment Variables & Secrets
+.env
+.streamlit/secrets.toml
+
+# Python Cache & Virtual Environments
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+env/
+
+# System / IDE
+.DS_Store
+.vscode/
+.idea/
