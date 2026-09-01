@@ -10,6 +10,20 @@ An autonomous lead intake portal built with Streamlit and powered by an n8n work
 5. **Slack Alert**: Sends interactive Block Kit alerts with priority colors.
 6. **Gmail Automation**: Sends personalized scheduling links to high-priority leads.
 
+## 🏗️ Architecture Overview
+
+```text
+[ Streamlit Web UI ]
+         │
+         ▼ (POST Webhook)
+[ n8n Workflow Engine ]
+    ├── ⚙️ Sanitize & Validate (Schema Verification)
+    ├── 🤖 Groq AI Lead Qualification Agent
+    ├── 📊 Google Sheets Database (Hot / Cold Leads)
+    ├── 💬 Slack Alert (Block Kit Notification)
+    └── ✉️ Gmail Node (Automated Email Routing)
+```
+
 ## Local Setup
 
 1. **Clone repository:**
